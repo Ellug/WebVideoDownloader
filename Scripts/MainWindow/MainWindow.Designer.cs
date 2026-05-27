@@ -1,0 +1,345 @@
+﻿namespace WebVideoDownloader;
+
+partial class MainWindow
+{
+    /// <summary>
+    ///  Required designer variable.
+    /// </summary>
+    private System.ComponentModel.IContainer components = null!;
+
+    /// <summary>
+    ///  Clean up any resources being used.
+    /// </summary>
+    /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            components?.Dispose();
+            _httpClient.Dispose();
+            _scanTimer.Dispose();
+            _downloadCts?.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+
+    #region Windows Form Designer generated code
+
+    /// <summary>
+    ///  Required method for Designer support - do not modify
+    ///  the contents of this method with the code editor.
+    /// </summary>
+    private void InitializeComponent()
+    {
+        components = new System.ComponentModel.Container();
+        rootLayout = new TableLayoutPanel();
+        topLayout = new TableLayoutPanel();
+        urlLabel = new Label();
+        urlTextBox = new TextBox();
+        navigateButton = new Button();
+        rescanButton = new Button();
+        chooseFolderButton = new Button();
+        openFolderButton = new Button();
+        downloadButton = new Button();
+        cancelButton = new Button();
+        themeToggleButton = new Button();
+        splitContainer = new SplitContainer();
+        webView = new Microsoft.Web.WebView2.WinForms.WebView2();
+        rightLayout = new TableLayoutPanel();
+        candidatesLabel = new Label();
+        candidatesListView = new ListView();
+        recommendationColumnHeader = new ColumnHeader();
+        typeColumnHeader = new ColumnHeader();
+        qualityColumnHeader = new ColumnHeader();
+        hostColumnHeader = new ColumnHeader();
+        sourceColumnHeader = new ColumnHeader();
+        urlColumnHeader = new ColumnHeader();
+        contentTypeColumnHeader = new ColumnHeader();
+        statusLayout = new TableLayoutPanel();
+        progressBar = new ProgressBar();
+        statusLabel = new Label();
+        outputFolderLabel = new Label();
+        logTextBox = new TextBox();
+        rootLayout.SuspendLayout();
+        topLayout.SuspendLayout();
+        ((System.ComponentModel.ISupportInitialize)splitContainer).BeginInit();
+        splitContainer.Panel1.SuspendLayout();
+        splitContainer.Panel2.SuspendLayout();
+        splitContainer.SuspendLayout();
+        ((System.ComponentModel.ISupportInitialize)webView).BeginInit();
+        rightLayout.SuspendLayout();
+        statusLayout.SuspendLayout();
+        SuspendLayout();
+        AutoScaleMode = AutoScaleMode.Font;
+        ClientSize = new Size(1180, 760);
+        Controls.Add(rootLayout);
+        MinimumSize = new Size(940, 620);
+        Name = "MainWindow";
+        Text = "Web Video Downloader";
+        FormClosing += MainWindow_FormClosing;
+        Load += MainWindow_Load;
+        rootLayout.ColumnCount = 1;
+        rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        rootLayout.Controls.Add(topLayout, 0, 0);
+        rootLayout.Controls.Add(splitContainer, 0, 1);
+        rootLayout.Controls.Add(statusLayout, 0, 2);
+        rootLayout.Controls.Add(logTextBox, 0, 3);
+        rootLayout.Dock = DockStyle.Fill;
+        rootLayout.Location = new Point(0, 0);
+        rootLayout.Name = "rootLayout";
+        rootLayout.RowCount = 4;
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 122F));
+        rootLayout.Size = new Size(1180, 760);
+        rootLayout.TabIndex = 0;
+        topLayout.ColumnCount = 9;
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52F));
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78F));
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92F));
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96F));
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96F));
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88F));
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 74F));
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64F));
+        topLayout.Controls.Add(urlLabel, 0, 0);
+        topLayout.Controls.Add(urlTextBox, 1, 0);
+        topLayout.Controls.Add(navigateButton, 2, 0);
+        topLayout.Controls.Add(rescanButton, 3, 0);
+        topLayout.Controls.Add(chooseFolderButton, 4, 0);
+        topLayout.Controls.Add(openFolderButton, 5, 0);
+        topLayout.Controls.Add(downloadButton, 6, 0);
+        topLayout.Controls.Add(cancelButton, 7, 0);
+        topLayout.Controls.Add(themeToggleButton, 8, 0);
+        topLayout.Dock = DockStyle.Fill;
+        topLayout.Location = new Point(6, 6);
+        topLayout.Margin = new Padding(6);
+        topLayout.Name = "topLayout";
+        topLayout.RowCount = 1;
+        topLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        topLayout.Size = new Size(1168, 36);
+        topLayout.TabIndex = 0;
+        urlLabel.Dock = DockStyle.Fill;
+        urlLabel.Location = new Point(3, 0);
+        urlLabel.Name = "urlLabel";
+        urlLabel.Size = new Size(46, 36);
+        urlLabel.TabIndex = 0;
+        urlLabel.Text = "URL";
+        urlLabel.TextAlign = ContentAlignment.MiddleLeft;
+        urlTextBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        urlTextBox.Location = new Point(55, 6);
+        urlTextBox.Name = "urlTextBox";
+        urlTextBox.Size = new Size(668, 25);
+        urlTextBox.TabIndex = 1;
+        navigateButton.Dock = DockStyle.Fill;
+        navigateButton.Location = new Point(729, 3);
+        navigateButton.Name = "navigateButton";
+        navigateButton.Size = new Size(72, 30);
+        navigateButton.TabIndex = 2;
+        navigateButton.Text = "열기";
+        navigateButton.UseVisualStyleBackColor = true;
+        navigateButton.Click += NavigateButton_Click;
+        rescanButton.Dock = DockStyle.Fill;
+        rescanButton.Location = new Point(807, 3);
+        rescanButton.Name = "rescanButton";
+        rescanButton.Size = new Size(86, 30);
+        rescanButton.TabIndex = 3;
+        rescanButton.Text = "다시 탐색";
+        rescanButton.UseVisualStyleBackColor = true;
+        rescanButton.Click += RescanButton_Click;
+        chooseFolderButton.Dock = DockStyle.Fill;
+        chooseFolderButton.Location = new Point(899, 3);
+        chooseFolderButton.Name = "chooseFolderButton";
+        chooseFolderButton.Size = new Size(90, 30);
+        chooseFolderButton.TabIndex = 4;
+        chooseFolderButton.Text = "저장 폴더";
+        chooseFolderButton.UseVisualStyleBackColor = true;
+        chooseFolderButton.Click += ChooseFolderButton_Click;
+        openFolderButton.Dock = DockStyle.Fill;
+        openFolderButton.Location = new Point(995, 3);
+        openFolderButton.Name = "openFolderButton";
+        openFolderButton.Size = new Size(90, 30);
+        openFolderButton.TabIndex = 5;
+        openFolderButton.Text = "폴더 열기";
+        openFolderButton.UseVisualStyleBackColor = true;
+        openFolderButton.Click += OpenFolderButton_Click;
+        downloadButton.Dock = DockStyle.Fill;
+        downloadButton.Enabled = false;
+        downloadButton.Location = new Point(1091, 3);
+        downloadButton.Name = "downloadButton";
+        downloadButton.Size = new Size(82, 30);
+        downloadButton.TabIndex = 6;
+        downloadButton.Text = "다운로드";
+        downloadButton.UseVisualStyleBackColor = true;
+        downloadButton.Click += DownloadButton_Click;
+        cancelButton.Dock = DockStyle.Fill;
+        cancelButton.Enabled = false;
+        cancelButton.Location = new Point(1179, 3);
+        cancelButton.Name = "cancelButton";
+        cancelButton.Size = new Size(68, 30);
+        cancelButton.TabIndex = 7;
+        cancelButton.Text = "취소";
+        cancelButton.UseVisualStyleBackColor = true;
+        cancelButton.Click += CancelButton_Click;
+        themeToggleButton.Dock = DockStyle.Fill;
+        themeToggleButton.Location = new Point(1253, 3);
+        themeToggleButton.Name = "themeToggleButton";
+        themeToggleButton.Size = new Size(58, 30);
+        themeToggleButton.TabIndex = 8;
+        themeToggleButton.Text = "🌙";
+        themeToggleButton.UseVisualStyleBackColor = true;
+        themeToggleButton.Click += ThemeToggleButton_Click;
+        splitContainer.Dock = DockStyle.Fill;
+        splitContainer.Location = new Point(6, 54);
+        splitContainer.Margin = new Padding(6);
+        splitContainer.Name = "splitContainer";
+        splitContainer.Panel1.Controls.Add(webView);
+        splitContainer.Panel2.Controls.Add(rightLayout);
+        splitContainer.Size = new Size(1168, 542);
+        splitContainer.SplitterDistance = 760;
+        splitContainer.TabIndex = 1;
+        webView.AllowExternalDrop = true;
+        webView.CreationProperties = null;
+        webView.DefaultBackgroundColor = Color.White;
+        webView.Dock = DockStyle.Fill;
+        webView.Location = new Point(0, 0);
+        webView.Name = "webView";
+        webView.Size = new Size(760, 542);
+        webView.TabIndex = 0;
+        webView.ZoomFactor = 1D;
+        rightLayout.ColumnCount = 1;
+        rightLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        rightLayout.Controls.Add(candidatesLabel, 0, 0);
+        rightLayout.Controls.Add(candidatesListView, 0, 1);
+        rightLayout.Dock = DockStyle.Fill;
+        rightLayout.Location = new Point(0, 0);
+        rightLayout.Name = "rightLayout";
+        rightLayout.RowCount = 2;
+        rightLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+        rightLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        rightLayout.Size = new Size(404, 542);
+        rightLayout.TabIndex = 0;
+        candidatesLabel.Dock = DockStyle.Fill;
+        candidatesLabel.Location = new Point(3, 0);
+        candidatesLabel.Name = "candidatesLabel";
+        candidatesLabel.Size = new Size(398, 30);
+        candidatesLabel.TabIndex = 0;
+        candidatesLabel.Text = "탐색된 동영상 (추천순)";
+        candidatesLabel.TextAlign = ContentAlignment.MiddleLeft;
+        candidatesListView.Columns.AddRange(new ColumnHeader[] { recommendationColumnHeader, typeColumnHeader, qualityColumnHeader, hostColumnHeader, sourceColumnHeader, urlColumnHeader, contentTypeColumnHeader });
+        candidatesListView.Dock = DockStyle.Fill;
+        candidatesListView.FullRowSelect = true;
+        candidatesListView.HideSelection = false;
+        candidatesListView.Location = new Point(3, 33);
+        candidatesListView.MultiSelect = false;
+        candidatesListView.Name = "candidatesListView";
+        candidatesListView.Size = new Size(398, 506);
+        candidatesListView.TabIndex = 1;
+        candidatesListView.ShowItemToolTips = true;
+        candidatesListView.UseCompatibleStateImageBehavior = false;
+        candidatesListView.View = View.Details;
+        candidatesListView.ItemSelectionChanged += CandidatesListView_ItemSelectionChanged;
+        recommendationColumnHeader.Text = "구분";
+        recommendationColumnHeader.Width = 86;
+        typeColumnHeader.Text = "형식";
+        typeColumnHeader.Width = 74;
+        qualityColumnHeader.Text = "품질";
+        qualityColumnHeader.Width = 64;
+        hostColumnHeader.Text = "호스트";
+        hostColumnHeader.Width = 132;
+        sourceColumnHeader.Text = "출처";
+        sourceColumnHeader.Width = 78;
+        urlColumnHeader.Text = "경로/파일";
+        urlColumnHeader.Width = 260;
+        contentTypeColumnHeader.Text = "Content-Type";
+        contentTypeColumnHeader.Width = 120;
+        statusLayout.ColumnCount = 3;
+        statusLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230F));
+        statusLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        statusLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 360F));
+        statusLayout.Controls.Add(progressBar, 0, 0);
+        statusLayout.Controls.Add(statusLabel, 1, 0);
+        statusLayout.Controls.Add(outputFolderLabel, 2, 0);
+        statusLayout.Dock = DockStyle.Fill;
+        statusLayout.Location = new Point(6, 608);
+        statusLayout.Margin = new Padding(6);
+        statusLayout.Name = "statusLayout";
+        statusLayout.RowCount = 1;
+        statusLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        statusLayout.Size = new Size(1168, 24);
+        statusLayout.TabIndex = 2;
+        progressBar.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        progressBar.Location = new Point(3, 3);
+        progressBar.Name = "progressBar";
+        progressBar.Size = new Size(224, 18);
+        progressBar.TabIndex = 0;
+        statusLabel.Dock = DockStyle.Fill;
+        statusLabel.Location = new Point(233, 0);
+        statusLabel.Name = "statusLabel";
+        statusLabel.Size = new Size(572, 24);
+        statusLabel.TabIndex = 1;
+        statusLabel.Text = "대기 중";
+        statusLabel.TextAlign = ContentAlignment.MiddleLeft;
+        outputFolderLabel.Dock = DockStyle.Fill;
+        outputFolderLabel.Location = new Point(811, 0);
+        outputFolderLabel.Name = "outputFolderLabel";
+        outputFolderLabel.Size = new Size(354, 24);
+        outputFolderLabel.TabIndex = 2;
+        outputFolderLabel.TextAlign = ContentAlignment.MiddleRight;
+        logTextBox.Dock = DockStyle.Fill;
+        logTextBox.Location = new Point(6, 644);
+        logTextBox.Margin = new Padding(6);
+        logTextBox.Multiline = true;
+        logTextBox.Name = "logTextBox";
+        logTextBox.ReadOnly = true;
+        logTextBox.ScrollBars = ScrollBars.Vertical;
+        logTextBox.Size = new Size(1168, 110);
+        logTextBox.TabIndex = 3;
+        rootLayout.ResumeLayout(false);
+        topLayout.ResumeLayout(false);
+        topLayout.PerformLayout();
+        splitContainer.Panel1.ResumeLayout(false);
+        splitContainer.Panel2.ResumeLayout(false);
+        ((System.ComponentModel.ISupportInitialize)splitContainer).EndInit();
+        splitContainer.ResumeLayout(false);
+        ((System.ComponentModel.ISupportInitialize)webView).EndInit();
+        rightLayout.ResumeLayout(false);
+        statusLayout.ResumeLayout(false);
+        ResumeLayout(false);
+    }
+
+    #endregion
+
+    private TableLayoutPanel rootLayout;
+    private TableLayoutPanel topLayout;
+    private Label urlLabel;
+    private TextBox urlTextBox;
+    private Button navigateButton;
+    private Button rescanButton;
+    private Button chooseFolderButton;
+    private Button openFolderButton;
+    private Button downloadButton;
+    private Button cancelButton;
+    private SplitContainer splitContainer;
+    private Microsoft.Web.WebView2.WinForms.WebView2 webView;
+    private TableLayoutPanel rightLayout;
+    private Label candidatesLabel;
+    private ListView candidatesListView;
+    private ColumnHeader recommendationColumnHeader;
+    private ColumnHeader typeColumnHeader;
+    private ColumnHeader qualityColumnHeader;
+    private ColumnHeader hostColumnHeader;
+    private ColumnHeader sourceColumnHeader;
+    private ColumnHeader urlColumnHeader;
+    private ColumnHeader contentTypeColumnHeader;
+    private TableLayoutPanel statusLayout;
+    private ProgressBar progressBar;
+    private Label statusLabel;
+    private Label outputFolderLabel;
+    private TextBox logTextBox;
+    private Button themeToggleButton;
+}
+
