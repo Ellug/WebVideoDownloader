@@ -5,6 +5,8 @@ namespace WebVideoDownloader.Services;
 
 internal sealed class FfmpegRunner(string browserUserAgent, Action<string> setStatus, Action<string> log)
 {
+    private static readonly string? BundledFfmpegPath = ResolveBundledFfmpegPath();
+
     public async Task DownloadHlsAsync(
         string inputUrlOrPath,
         string outputPath,
@@ -98,7 +100,7 @@ internal sealed class FfmpegRunner(string browserUserAgent, Action<string> setSt
     private static Process CreateBaseProcess()
     {
         var process = new Process();
-        process.StartInfo.FileName = "ffmpeg";
+        process.StartInfo.FileName = BundledFfmpegPath ?? "ffmpeg";
         process.StartInfo.UseShellExecute = false;
         process.StartInfo.RedirectStandardOutput = true;
         process.StartInfo.RedirectStandardError = true;
@@ -109,6 +111,48 @@ internal sealed class FfmpegRunner(string browserUserAgent, Action<string> setSt
         process.StartInfo.ArgumentList.Add("-progress");
         process.StartInfo.ArgumentList.Add("pipe:1");
         return process;
+    }
+
+    private static string? ResolveBundledFfmpegPath()
+    {
+        var candidates = new List<string>();
+
+        var overridePath = Environment.GetEnvironmentVariable("WVD_FFMPEG_PATH");
+        if (!string.IsNullOrWhiteSpace(overridePath))
+        {
+            candidates.Add(overridePath);
+        }
+
+        AddCandidateDirectories(candidates, AppContext.BaseDirectory);
+        AddCandidateDirectories(candidates, Path.GetDirectoryName(Environment.ProcessPath));
+
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+            catch
+            {
+                // Ignore invalid path candidates.
+            }
+        }
+
+        return null;
+    }
+
+    private static void AddCandidateDirectories(List<string> candidates, string? baseDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(baseDirectory))
+        {
+            return;
+        }
+
+        candidates.Add(Path.Combine(baseDirectory, "ffmpeg.exe"));
+        candidates.Add(Path.Combine(baseDirectory, "Tools", "ffmpeg", "win-x64", "ffmpeg.exe"));
     }
 
     private static void AddCopyMp4OutputArguments(Process process, string outputPath)
@@ -135,7 +179,10 @@ internal sealed class FfmpegRunner(string browserUserAgent, Action<string> setSt
         }
         catch (Win32Exception ex)
         {
-            throw new InvalidOperationException("다운로드와 MP4 변환에는 ffmpeg가 필요합니다. ffmpeg.exe를 PATH에 추가한 뒤 다시 실행하세요.", ex);
+            throw new InvalidOperationException(
+                "다운로드와 MP4 변환에는 ffmpeg가 필요합니다. " +
+                "PATH에 ffmpeg.exe를 추가하거나 앱과 같은 폴더(또는 Tools/ffmpeg/win-x64)에 ffmpeg.exe를 두고 다시 실행하세요.",
+                ex);
         }
 
         process.BeginOutputReadLine();
