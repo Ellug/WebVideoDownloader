@@ -286,4 +286,94 @@ internal static class VideoProbeScripts
         });
         process.stdout.write(JSON.stringify(decoded));
         """;
+
+    /// <summary>
+    /// MSE(Media Source Extensions) 캡처 훅입니다.
+    /// 플레이어가 디코더에 넘기는 바이트를 그대로 로컬 싱크로 복사합니다.
+    /// 사이트가 세그먼트를 어떻게 암호화했든 이 지점에서는 이미 평문이므로 방식과 무관하게 동작합니다.
+    /// 모든 프레임에 주입되며, 각 프레임이 자기 싱크로 직접 POST합니다.
+    /// </summary>
+    public static string BuildMediaSourceCaptureScript(int port, string token)
+    {
+        return CaptureTemplate
+            .Replace("__WVD_PORT__", port.ToString(), StringComparison.Ordinal)
+            .Replace("__WVD_TOKEN__", token, StringComparison.Ordinal);
+    }
+
+    private const string CaptureTemplate = """
+        (() => {
+            if (window.__wvdCaptureInstalled) {
+                return;
+            }
+
+            window.__wvdCaptureInstalled = true;
+
+            if (typeof MediaSource === 'undefined' || typeof SourceBuffer === 'undefined') {
+                return;
+            }
+
+            const endpoint = 'http://127.0.0.1:__WVD_PORT__/chunk?token=__WVD_TOKEN__';
+            const info = new WeakMap();
+            let nextTrackId = 0;
+
+            const send = (track, mime, seq, bytes) => {
+                const url = endpoint + '&track=' + track + '&seq=' + seq + '&mime=' + encodeURIComponent(mime);
+                return fetch(url, {
+                    method: 'POST',
+                    // text/plain은 CORS 안전 목록이라 별도 프리플라이트를 유발하지 않습니다.
+                    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+                    body: bytes,
+                    mode: 'cors',
+                    credentials: 'omit',
+                    cache: 'no-store',
+                    referrerPolicy: 'no-referrer'
+                }).catch(() => {});
+            };
+
+            const toBytes = (data) => {
+                if (data instanceof ArrayBuffer) {
+                    return new Uint8Array(data).slice();
+                }
+
+                if (ArrayBuffer.isView(data)) {
+                    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice();
+                }
+
+                return null;
+            };
+
+            const originalAddSourceBuffer = MediaSource.prototype.addSourceBuffer;
+            MediaSource.prototype.addSourceBuffer = function (mimeType) {
+                const sourceBuffer = originalAddSourceBuffer.call(this, mimeType);
+
+                try {
+                    info.set(sourceBuffer, {
+                        id: nextTrackId++,
+                        mime: String(mimeType || ''),
+                        seq: 0,
+                        // 전송을 직렬화해야 싱크에 도착하는 순서가 append 순서와 같아집니다.
+                        queue: Promise.resolve()
+                    });
+                } catch {}
+
+                return sourceBuffer;
+            };
+
+            const originalAppendBuffer = SourceBuffer.prototype.appendBuffer;
+            SourceBuffer.prototype.appendBuffer = function (data) {
+                try {
+                    const entry = info.get(this);
+                    if (entry) {
+                        const bytes = toBytes(data);
+                        if (bytes && bytes.byteLength > 0) {
+                            const seq = entry.seq++;
+                            entry.queue = entry.queue.then(() => send(entry.id, entry.mime, seq, bytes));
+                        }
+                    }
+                } catch {}
+
+                return originalAppendBuffer.call(this, data);
+            };
+        })();
+        """;
 }

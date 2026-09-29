@@ -14,7 +14,10 @@
 - 직접 파일 다운로드(MP4/WebM/MOV 등)
 - HLS 다운로드(매니페스트 정규화 + ffmpeg/세그먼트 처리)
 - Level5 HLS 다운로드(WASM 런타임 기반 키 디코딩 후 세그먼트 복호화)
+- 재생 캡처(MSE): 플레이어가 디코더에 넘기는 바이트를 그대로 저장해 사이트별 암호화와 무관하게 대응
 - 다운로드 진행 상태/로그 표시, 취소, 저장 폴더 열기
+- `data-video-url` 플레이어 설정 탐지 (`.shtml` HLS 주소 포함)
+- 시작·종료 시간으로 구간 저장 (MP4)
 - 다크/라이트 테마 토글
 
 ## 동작 원리
@@ -35,7 +38,8 @@
 | 후보 관리 | [`Scripts/MainWindow/MainWindow.Candidates.cs`](./Scripts/MainWindow/MainWindow.Candidates.cs) | 후보 추가·보강·재생중 표시·리스트 렌더링 |
 | 다운로드 파이프라인 | [`Scripts/MainWindow/MainWindow.Downloads.cs`](./Scripts/MainWindow/MainWindow.Downloads.cs) | Direct/HLS/Level5 분기, 헤더·쿠키 처리, 세그먼트 다운로드 및 복호화 |
 | 유틸/UI 상태 | [`Scripts/MainWindow/MainWindow.Utilities.cs`](./Scripts/MainWindow/MainWindow.Utilities.cs) | 상태/진행률/테마/로그/공용 유틸 함수 |
-| 브라우저 주입 스크립트 | [`Scripts/Services/VideoProbeScripts.cs`](./Scripts/Services/VideoProbeScripts.cs) | fetch/XHR 가로채기, URL/HLS 탐지, Level5 디코더 JS 소스 보관 |
+| 브라우저 주입 스크립트 | [`Scripts/Services/VideoProbeScripts.cs`](./Scripts/Services/VideoProbeScripts.cs) | fetch/XHR 가로채기, URL/HLS 탐지, Level5 디코더 JS 소스, MSE 캡처 훅 |
+| 재생 캡처 싱크 | [`Scripts/Services/MediaCaptureSink.cs`](./Scripts/Services/MediaCaptureSink.cs) | 루프백 TCP 싱크로 `appendBuffer` 바이트 수집, 트랙별 파일 기록 |
 | 후보 점수화 | [`Scripts/Services/CandidateDisplayService.cs`](./Scripts/Services/CandidateDisplayService.cs) | 화질 추정·우선순위 계산·추천 라벨 생성 |
 | 미디어 분류 | [`Scripts/Services/MediaClassifier.cs`](./Scripts/Services/MediaClassifier.cs) | URL/Content-Type 기반 VideoKind 판별 |
 | URL 추출 | [`Scripts/Services/MediaUrlExtractor.cs`](./Scripts/Services/MediaUrlExtractor.cs) | HTML/JS 텍스트에서 미디어/플레이어 URL 정규식 추출 |
@@ -51,3 +55,30 @@
 - 단일 신호 의존 회피: DOM만으로 놓치는 케이스를 CDP·응답바디 분석으로 보완
 - 단계별 폴백 전략: HLS/Level5 실패 시 다른 경로를 시도해 성공률 확보
 - 후보 우선순위화: 사용자에게 “다운로드 가능한 가능성이 높은 항목”을 먼저 노출
+- 최종 폴백은 재생 캡처: URL·키를 못 구해도 브라우저가 재생만 할 수 있으면 저장 가능
+
+## 구간 저장 사용법
+
+영상 후보를 선택한 뒤 **구간 저장**을 체크하고 시작·종료 시간을 입력하세요.
+`90`, `01:30`, `00:01:30` 모두 1분 30초를 뜻합니다. 종료를 비워두면 끝까지 저장합니다.
+현재는 전체 소스를 임시로 받은 뒤 지정 구간을 H.264/AAC MP4로 재인코딩합니다.
+따라서 전체 다운로드에 필요한 시간과 임시 디스크 공간이 필요하며 ffmpeg가 설치되어 있어야 합니다.
+재생 캡처 후보의 시간은 원본 페이지가 아닌 **모인 캡처 파일 시작점** 기준입니다.
+시작 시간이 파일 길이를 넘으면 오류를 표시하고 빈 결과 파일을 삭제합니다.
+
+## 재생 캡처 사용법
+
+URL 탐지나 키 복호화가 통하지 않는 사이트를 위한 마지막 수단입니다.
+
+1. 페이지를 열고 영상을 **재생**합니다.
+2. 후보 목록에 `재생 캡처` 항목이 뜨고, 재생이 진행될수록 크기가 올라갑니다.
+3. 원하는 만큼(보통 끝까지) 재생한 뒤 다운로드를 누르면 모아 둔 트랙을 하나로 합쳐 저장합니다.
+
+동작 원리상 **재생한 구간만** 저장됩니다. 또한 EME/Widevine 같은 DRM 콘텐츠는 브라우저 안에서도 평문이
+JS로 노출되지 않으므로 캡처 대상이 아닙니다.
+
+## 회귀 검증
+
+`dotnet run --project Tests/Regression`으로 구간 입력과 플레이어 설정 분류를 검사합니다.
+실제 ffmpeg 구간 저장까지 검사하려면 뒤에 `-- 입력.mp4 출력.mp4`를 붙이세요.
+입력은 길이 5초인 테스트 영상, 출력은 덮어써도 되는 테스트 경로를 사용합니다.

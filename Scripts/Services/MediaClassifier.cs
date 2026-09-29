@@ -4,6 +4,14 @@ namespace WebVideoDownloader.Services;
 
 internal static class MediaClassifier
 {
+    public static VideoKind DetermineConfiguredVideoKind(string url)
+    {
+        var kind = DetermineVideoKind(url, "");
+        return kind == VideoKind.Unknown && Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+            uri.AbsolutePath.EndsWith(".shtml", StringComparison.OrdinalIgnoreCase)
+            ? VideoKind.Hls : kind;
+    }
+
     public static VideoKind DetermineVideoKind(string url, string? contentType)
     {
         var lowerUrl = url.ToLowerInvariant();

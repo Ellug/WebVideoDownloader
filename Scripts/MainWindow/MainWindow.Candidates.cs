@@ -22,6 +22,11 @@ public partial class MainWindow
         {
             return;
         }
+        if (!UrlTools.IsPlausibleMediaUrl(text))
+        {
+            // 스크립트에서 긁힌 정규식/템플릿 조각이 후보로 올라가면 ffmpeg가 404를 받습니다.
+            return;
+        }
         VideoKind videoKind = kindOverride ?? MediaClassifier.DetermineVideoKind(text, contentType);
         if (videoKind != VideoKind.Unknown)
         {
@@ -41,6 +46,59 @@ public partial class MainWindow
             CandidateDisplayInfo displayInfo = CandidateDisplayService.GetDisplayInfo(videoCandidate);
             Log($"영상 후보 추가 [{displayInfo.Recommendation}/{videoCandidate.KindLabel}/{displayInfo.QualityLabel}/{displayInfo.HostLabel}/{source}]: {videoCandidate.Url}");
         }
+    }
+
+    /// <summary>
+    /// 재생 캡처는 URL이 아니라 브라우저가 넘겨준 바이트가 원본이라 별도 후보로 관리합니다.
+    /// 캡처가 진행되는 동안 크기 표시를 갱신합니다.
+    /// </summary>
+    private void AddOrUpdateCaptureCandidate()
+    {
+        if (base.InvokeRequired)
+        {
+            BeginInvoke(AddOrUpdateCaptureCandidate);
+            return;
+        }
+
+        var status = _captureSink.GetStatus();
+        if (status.ByteCount <= 0)
+        {
+            return;
+        }
+
+        var note = $"{status.TrackCount}트랙 {FormatBytes(status.ByteCount)}";
+        var existingIndex = _candidates.FindIndex(candidate => candidate.Kind == VideoKind.MediaCapture);
+
+        if (existingIndex >= 0)
+        {
+            if (_candidates[existingIndex].CaptureNote == note)
+            {
+                return;
+            }
+
+            _candidates[existingIndex] = _candidates[existingIndex] with
+            {
+                CaptureNote = note,
+                ContentType = status.MimeType
+            };
+
+            RenderCandidateList();
+            return;
+        }
+
+        _candidateUrls.Add(CaptureCandidateUrl);
+        _candidates.Add(new VideoCandidate(
+            CaptureCandidateUrl,
+            VideoKind.MediaCapture,
+            "재생 캡처",
+            status.MimeType,
+            _currentPageUrl,
+            DateTime.Now,
+            CaptureNote: note));
+
+        RenderCandidateList();
+        downloadButton.Enabled = _downloadCts == null && candidatesListView.SelectedItems.Count > 0;
+        Log($"재생 캡처 후보 추가: {note} ({status.MimeType})");
     }
 
     private void TryUpgradeCandidate(string normalizedUrl, VideoKind kind, string source, string contentType, string? refererOverride, string? wasmJsUrl, string? wasmBinUrl, string? expectedWasmSha384Hex, string? capturedManifestText)

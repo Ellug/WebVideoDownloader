@@ -12,15 +12,22 @@ internal sealed record VideoCandidate(
     string? ExpectedWasmSha384Hex = null,
     string? CapturedManifestText = null,
     DateTime? LastPlaybackSignalAt = null,
-    string? PlaybackSignalSource = null)
+    string? PlaybackSignalSource = null,
+    string? CaptureNote = null)
 {
     public string KindLabel => Kind switch
     {
         VideoKind.Hls => "HLS",
         VideoKind.Level5Hls => "Level5 HLS",
+        VideoKind.MediaCapture => "재생 캡처",
         _ => "파일"
     };
 }
+
+/// <summary>SourceBuffer 하나가 만들어 낸 연속 구간 파일입니다.</summary>
+internal sealed record CapturedTrack(int TrackId, int PartIndex, string MimeType, string FilePath, long ByteCount);
+
+internal sealed record CaptureStatus(int TrackCount, long ByteCount, string MimeType);
 
 internal sealed record CandidateDisplayInfo(
     int Priority,
@@ -55,5 +62,6 @@ internal enum VideoKind
     Unknown,
     Hls,
     Level5Hls,
-    DirectFile
+    DirectFile,
+    MediaCapture
 }

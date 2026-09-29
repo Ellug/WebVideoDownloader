@@ -22,6 +22,13 @@ internal static class CandidateDisplayService
 
     public static CandidateDisplayInfo GetDisplayInfo(VideoCandidate candidate)
     {
+        if (candidate.Kind == VideoKind.MediaCapture)
+        {
+            // URL 기반 지표가 하나도 없는 후보라 별도로 표시합니다.
+            var captureNote = string.IsNullOrWhiteSpace(candidate.CaptureNote) ? "캡처 중" : candidate.CaptureNote;
+            return new CandidateDisplayInfo(210, null, "재생 캡처", captureNote, "브라우저", "재생 중인 영상을 그대로 저장");
+        }
+
         var host = GetHostLabel(candidate.Url);
         var shortUrl = GetShortUrlLabel(candidate.Url);
         var height = ExtractVideoHeight(candidate.Url);

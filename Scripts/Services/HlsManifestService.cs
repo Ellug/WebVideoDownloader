@@ -117,6 +117,76 @@ internal static class HlsManifestService
             .ToList();
     }
 
+    /// <summary>
+    /// 매니페스트가 선언한 암호화 방식(METHOD)을 모읍니다. NONE은 제외합니다.
+    /// AES-128 이외의 값이 있으면 직접 복호화 대신 ffmpeg에 맡겨야 합니다.
+    /// </summary>
+    public static IReadOnlyList<string> ExtractEncryptionMethods(string manifestText)
+    {
+        return manifestText
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => line.StartsWith("#EXT-X-KEY:", StringComparison.OrdinalIgnoreCase))
+            .Select(line => ExtractAttribute(line, "METHOD").Trim())
+            .Where(method => !string.IsNullOrWhiteSpace(method) &&
+                !method.Equals("NONE", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 키 서버 응답을 16바이트 키로 해석합니다.
+    /// 원시 16바이트 외에 hex 문자열(0x… 포함)이나 base64로 내려주는 사이트가 있습니다.
+    /// </summary>
+    public static byte[]? ParseKeyMaterial(byte[] responseBytes)
+    {
+        if (responseBytes.Length == 16)
+        {
+            return responseBytes;
+        }
+
+        if (responseBytes.Length is 0 or > 64)
+        {
+            return null;
+        }
+
+        var text = Encoding.UTF8.GetString(responseBytes).Trim().Trim('"', '\'');
+        if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            text = text[2..];
+        }
+
+        if (text.Length == 32 && text.All(Uri.IsHexDigit))
+        {
+            try
+            {
+                return Convert.FromHexString(text);
+            }
+            catch (FormatException)
+            {
+                // base64 해석으로 넘어갑니다.
+            }
+        }
+
+        return TryDecodeBase64Key(text);
+    }
+
+    private static byte[]? TryDecodeBase64Key(string text)
+    {
+        var padded = text.Replace('-', '+').Replace('_', '/');
+        padded = padded.PadRight(padded.Length + (4 - padded.Length % 4) % 4, '=');
+
+        try
+        {
+            var decoded = Convert.FromBase64String(padded);
+            return decoded.Length == 16 ? decoded : null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
     public static bool HasMediaSegments(string manifestText)
     {
         return manifestText
@@ -252,9 +322,11 @@ internal static class HlsManifestService
 
     public static string ExtractAttribute(string line, string name)
     {
+        // 태그의 첫 속성은 쉼표가 아니라 콜론 뒤에 옵니다(#EXT-X-KEY:METHOD=AES-128,URI="...").
+        // 콜론을 구분자로 인정하지 않으면 METHOD/BANDWIDTH 같은 선두 속성이 항상 빈 값으로 나옵니다.
         var match = Regex.Match(
             line,
-            @"(?:^|,)\s*" + Regex.Escape(name) + @"\s*=\s*(?:""(?<quoted>[^""]*)""|'(?<single>[^']*)'|(?<bare>[^,]*))",
+            @"(?:^|[,:])\s*" + Regex.Escape(name) + @"\s*=\s*(?:""(?<quoted>[^""]*)""|'(?<single>[^']*)'|(?<bare>[^,]*))",
             RegexOptions.IgnoreCase);
 
         if (!match.Success)

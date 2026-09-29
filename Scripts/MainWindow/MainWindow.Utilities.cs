@@ -262,6 +262,8 @@ public partial class MainWindow
 
     private void SetDownloadControls(bool isDownloading)
     {
+        _rangeEnabled.Enabled = !isDownloading;
+        _rangeStart.Enabled = _rangeEnd.Enabled = !isDownloading && _rangeEnabled.Checked;
         navigateButton.Enabled = !isDownloading;
         rescanButton.Enabled = !isDownloading;
         chooseFolderButton.Enabled = !isDownloading;

@@ -43,6 +43,35 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>
+    /// 재생 중 브라우저가 디코더로 넘긴 바이트를 모아 하나의 파일로 저장합니다.
+    /// 재생한 만큼만 저장되므로, 영상을 끝까지 재생한 뒤 눌러야 전체가 나옵니다.
+    /// </summary>
+    private async Task SaveCapturedMediaAsync(string outputPath, CancellationToken cancellationToken)
+    {
+        SetStatus("캡처본 정리 중...");
+        var tracks = await _captureSink.FlushAsync();
+
+        if (tracks.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "캡처된 재생 데이터가 없습니다. 페이지에서 영상을 재생한 뒤 다시 시도하세요. " +
+                "DRM(EME/Widevine)으로 보호된 영상은 브라우저 안에서도 평문이 나오지 않아 캡처할 수 없습니다.");
+        }
+
+        foreach (var track in tracks)
+        {
+            Log($"캡처 트랙 #{track.TrackId}: {FormatBytes(track.ByteCount)} ({track.MimeType})");
+        }
+
+        SetProgress(0, indeterminate: true);
+        SetStatus($"캡처본 {tracks.Count}개 트랙 병합 중...");
+        await _ffmpegRunner.MuxCapturedTracksAsync(
+            tracks.Select(track => track.FilePath).ToList(),
+            outputPath,
+            cancellationToken);
+    }
+
     private async Task DownloadHlsAsync(VideoCandidate candidate, string outputPath, CancellationToken cancellationToken)
     {
         var headerLines = await BuildFfmpegHeaderLinesAsync(candidate);
@@ -100,31 +129,166 @@ public partial class MainWindow
         if (HlsManifestService.UsesFragmentedMp4(manifestText))
         {
             SetStatus("캡처한 HLS 매니페스트를 로컬 플레이리스트로 변환 중...");
-            var localManifestPath = Path.Combine(tempRoot, "playlist.m3u8");
-            await File.WriteAllTextAsync(
-                localManifestPath,
-                HlsManifestService.Normalize(manifestText, manifestUrl),
-                new UTF8Encoding(false),
-                cancellationToken);
+            await RunFfmpegOnManifestAsync(
+                manifestText, manifestUrl, outputPath, tempRoot, headerLines, stderrTail, null, cancellationToken);
+            return;
+        }
 
-            await _ffmpegRunner.DownloadHlsAsync(localManifestPath, outputPath, headerLines, stderrTail, cancellationToken);
+        LogManifestDiagnostics(manifestText, manifestUrl);
+
+        var encryptionMethods = HlsManifestService.ExtractEncryptionMethods(manifestText);
+        var unsupportedMethods = encryptionMethods
+            .Where(method => !method.Equals("AES-128", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (unsupportedMethods.Count > 0)
+        {
+            Log($"직접 복호화가 불가능한 HLS 암호화 방식({string.Join(", ", unsupportedMethods)})입니다. ffmpeg에 맡깁니다.");
+            await RunFfmpegOnManifestAsync(
+                manifestText, manifestUrl, outputPath, tempRoot, headerLines, stderrTail, null, cancellationToken);
             return;
         }
 
         SetStatus("HLS 세그먼트를 직접 다운로드 중...");
         var decodedKeyByUrl = await FetchStandardHlsKeysAsync(manifestText, manifestUrl, candidate.Referer, cancellationToken);
-        var segments = HlsManifestService.ParseSegments(manifestText, manifestUrl, decodedKeyByUrl);
-        if (segments.Count == 0)
+
+        if (encryptionMethods.Count > 0 && decodedKeyByUrl.Count == 0)
         {
-            throw new InvalidOperationException("HLS 세그먼트를 찾지 못했습니다.");
+            Log("매니페스트가 암호화를 선언했지만 AES-128 키를 얻지 못했습니다. ffmpeg에 맡깁니다.");
+            await RunFfmpegOnManifestAsync(
+                manifestText, manifestUrl, outputPath, tempRoot, headerLines, stderrTail, null, cancellationToken);
+            return;
         }
 
-        var transportStreamPath = Path.Combine(tempRoot, "merged.ts");
-        await DownloadAndDecryptLevel5SegmentsAsync(segments, candidate.Referer, transportStreamPath, cancellationToken);
-        await ValidateTransportStreamFileAsync(transportStreamPath, cancellationToken);
+        try
+        {
+            var segments = HlsManifestService.ParseSegments(manifestText, manifestUrl, decodedKeyByUrl);
+            if (segments.Count == 0)
+            {
+                throw new InvalidOperationException("HLS 세그먼트를 찾지 못했습니다.");
+            }
 
-        SetStatus("TS를 MP4로 변환 중...");
-        await _ffmpegRunner.RemuxTransportStreamAsync(transportStreamPath, outputPath, cancellationToken);
+            var transportStreamPath = Path.Combine(tempRoot, "merged.ts");
+            await DownloadAndDecryptLevel5SegmentsAsync(segments, candidate.Referer, transportStreamPath, cancellationToken);
+            await ValidateTransportStreamFileAsync(transportStreamPath, cancellationToken);
+
+            SetStatus("TS를 MP4로 변환 중...");
+            await _ffmpegRunner.RemuxTransportStreamAsync(transportStreamPath, outputPath, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception segmentFailure)
+        {
+            Log($"세그먼트 직접 처리 실패, ffmpeg로 재시도합니다: {segmentFailure.Message}");
+            SetStatus("ffmpeg로 다시 시도하는 중...");
+            SetProgress(0, indeterminate: true);
+            await RunFfmpegOnManifestAsync(
+                manifestText, manifestUrl, outputPath, tempRoot, headerLines, stderrTail, segmentFailure, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// 실패 신고를 받았을 때 원인을 좁힐 수 있도록 매니페스트의 암호화 선언을 로그에 남깁니다.
+    /// </summary>
+    private void LogManifestDiagnostics(string manifestText, string manifestUrl)
+    {
+        var lines = manifestText
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .ToList();
+
+        var segmentCount = lines.Count(line => line.StartsWith("#EXTINF:", StringComparison.OrdinalIgnoreCase));
+        Log($"HLS 매니페스트 분석: {manifestUrl} (세그먼트 {segmentCount}개, {manifestText.Length}자)");
+
+        var keyLines = lines
+            .Where(line => line.StartsWith("#EXT-X-KEY:", StringComparison.OrdinalIgnoreCase) ||
+                line.StartsWith("#EXT-X-SESSION-KEY:", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToList();
+
+        if (keyLines.Count == 0)
+        {
+            Log("  암호화 선언 없음(#EXT-X-KEY 부재). 평문 세그먼트로 간주합니다.");
+            return;
+        }
+
+        foreach (var keyLine in keyLines)
+        {
+            Log("  " + keyLine);
+        }
+    }
+
+    /// <summary>
+    /// 매니페스트를 절대 URL로 정규화한 로컬 플레이리스트로 ffmpeg를 돌리고,
+    /// 실패하면 원본 m3u8 주소로 한 번 더 시도합니다.
+    /// ffmpeg는 표준 AES-128 HLS를 스스로 복호화하므로 직접 복호화가 막힌 사이트의 최종 대안입니다.
+    /// </summary>
+    private async Task RunFfmpegOnManifestAsync(
+        string manifestText,
+        string manifestUrl,
+        string outputPath,
+        string tempRoot,
+        string headerLines,
+        Queue<string> stderrTail,
+        Exception? primaryFailure,
+        CancellationToken cancellationToken)
+    {
+        var localManifestPath = Path.Combine(tempRoot, "playlist.m3u8");
+        await File.WriteAllTextAsync(
+            localManifestPath,
+            HlsManifestService.Normalize(manifestText, manifestUrl),
+            new UTF8Encoding(false),
+            cancellationToken);
+
+        try
+        {
+            await _ffmpegRunner.DownloadHlsAsync(localManifestPath, outputPath, headerLines, stderrTail, cancellationToken);
+            return;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception localFailure)
+        {
+            Log($"로컬 플레이리스트 ffmpeg 실행 실패, 원본 주소로 재시도합니다: {localFailure.Message}");
+            SetStatus("원본 m3u8 주소로 ffmpeg 재시도 중...");
+
+            try
+            {
+                await _ffmpegRunner.DownloadHlsAsync(manifestUrl, outputPath, headerLines, new Queue<string>(), cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception remoteFailure)
+            {
+                throw BuildHlsFailure(primaryFailure, localFailure, remoteFailure);
+            }
+        }
+    }
+
+    private static InvalidOperationException BuildHlsFailure(
+        Exception? primaryFailure,
+        Exception localFailure,
+        Exception remoteFailure)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("HLS 다운로드에 실패했습니다. 시도한 방법이 모두 실패했습니다.");
+
+        if (primaryFailure is not null)
+        {
+            builder.AppendLine().AppendLine("[1] 세그먼트 직접 다운로드/복호화").AppendLine(primaryFailure.Message);
+        }
+
+        builder.AppendLine().AppendLine("[2] ffmpeg + 로컬 플레이리스트").AppendLine(localFailure.Message);
+        builder.AppendLine().AppendLine("[3] ffmpeg + 원본 m3u8 주소").AppendLine(remoteFailure.Message);
+
+        return new InvalidOperationException(builder.ToString().TrimEnd());
     }
 
     private async Task DownloadLevel5HlsAsync(VideoCandidate candidate, string outputPath, CancellationToken cancellationToken)
@@ -148,6 +312,8 @@ public partial class MainWindow
             SetStatus("Level5 HLS 플레이리스트 분석 중...");
 
             var manifestText = await FetchStringAsync(candidate.Url, candidate.Referer, cancellationToken);
+            LogManifestDiagnostics(manifestText, candidate.Url);
+
             var uniqueKeyUrls = HlsManifestService.ExtractAes128KeyUrls(manifestText, candidate.Url);
             if (uniqueKeyUrls.Count == 0)
             {
@@ -176,18 +342,40 @@ public partial class MainWindow
                 decodedKeyByUrl[uniqueKeyUrls[index]] = decodedKeyCandidates[index];
             }
 
-            var segments = HlsManifestService.ParseSegments(manifestText, candidate.Url, decodedKeyByUrl);
-            if (segments.Count == 0)
+            try
             {
-                throw new InvalidOperationException("HLS 세그먼트를 찾지 못했습니다.");
+                var segments = HlsManifestService.ParseSegments(manifestText, candidate.Url, decodedKeyByUrl);
+                if (segments.Count == 0)
+                {
+                    throw new InvalidOperationException("HLS 세그먼트를 찾지 못했습니다.");
+                }
+
+                var transportStreamPath = Path.Combine(tempRoot, "merged.ts");
+                await DownloadAndDecryptLevel5SegmentsAsync(segments, candidate.Referer, transportStreamPath, cancellationToken);
+                await ValidateTransportStreamFileAsync(transportStreamPath, cancellationToken);
+
+                SetStatus("TS를 MP4로 변환 중...");
+                await _ffmpegRunner.RemuxTransportStreamAsync(transportStreamPath, outputPath, cancellationToken);
             }
-
-            var transportStreamPath = Path.Combine(tempRoot, "merged.ts");
-            await DownloadAndDecryptLevel5SegmentsAsync(segments, candidate.Referer, transportStreamPath, cancellationToken);
-            await ValidateTransportStreamFileAsync(transportStreamPath, cancellationToken);
-
-            SetStatus("TS를 MP4로 변환 중...");
-            await _ffmpegRunner.RemuxTransportStreamAsync(transportStreamPath, outputPath, cancellationToken);
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception segmentFailure)
+            {
+                Log($"Level5 세그먼트 처리 실패, ffmpeg로 재시도합니다: {segmentFailure.Message}");
+                SetStatus("ffmpeg로 다시 시도하는 중...");
+                SetProgress(0, indeterminate: true);
+                await RunFfmpegOnManifestAsync(
+                    manifestText,
+                    candidate.Url,
+                    outputPath,
+                    tempRoot,
+                    await BuildFfmpegHeaderLinesAsync(candidate),
+                    new Queue<string>(),
+                    segmentFailure,
+                    cancellationToken);
+            }
         }
         finally
         {
@@ -222,6 +410,30 @@ public partial class MainWindow
         response.EnsureSuccessStatusCode();
         var bytes = await NetworkResponseReader.ReadBytesAsync(response, cancellationToken);
         return Encoding.UTF8.GetString(bytes);
+    }
+
+    /// <summary>
+    /// 키 URI는 data: 스킴으로 인라인되는 경우가 있어 HTTP 요청 전에 먼저 처리합니다.
+    /// </summary>
+    private async Task<byte[]> FetchKeyBytesAsync(string url, string referer, CancellationToken cancellationToken)
+    {
+        if (!url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            return await FetchBytesAsync(url, referer, cancellationToken);
+        }
+
+        var commaIndex = url.IndexOf(',', StringComparison.Ordinal);
+        if (commaIndex < 0)
+        {
+            throw new InvalidOperationException($"data: 키 URI 형식이 올바르지 않습니다. URL: {url}");
+        }
+
+        var metadata = url[..commaIndex];
+        var payload = url[(commaIndex + 1)..];
+
+        return metadata.Contains(";base64", StringComparison.OrdinalIgnoreCase)
+            ? Convert.FromBase64String(payload)
+            : Encoding.UTF8.GetBytes(Uri.UnescapeDataString(payload));
     }
 
     private async Task<byte[]> FetchBytesAsync(string url, string referer, CancellationToken cancellationToken)
@@ -405,7 +617,12 @@ public partial class MainWindow
         }
 
         var firstBytes = Convert.ToHexString(encryptedBytes.AsSpan(0, Math.Min(encryptedBytes.Length, 16)));
+        var hint = segment.KeyCandidates.Count == 0
+            ? "매니페스트에서 사용할 수 있는 AES-128 키를 찾지 못했습니다(keys=0). "
+            : "";
+
         throw new InvalidOperationException(
+            hint +
             $"세그먼트 #{segment.Index} 복호화 결과에서 MPEG-TS sync를 찾지 못했습니다. " +
             $"encLen={encryptedBytes.Length}, first16={firstBytes}, keys={segment.KeyCandidates.Count}, ivs={decodeResult.IvCandidateCount}, attempts={decodeResult.Attempts}, " +
             $"bestSync={decodeResult.BestCandidate.SyncCount}, bestOffset={decodeResult.BestCandidate.Offset}, URL: {segment.Url}");
@@ -489,7 +706,15 @@ public partial class MainWindow
             baseName = baseName[..90].Trim();
         }
 
-        var extension = candidate.Kind is VideoKind.Hls or VideoKind.Level5Hls ? ".mp4" : GetDirectDownloadExtension(candidate.Url);
+        var extension = candidate.Kind switch
+        {
+            VideoKind.Hls or VideoKind.Level5Hls => ".mp4",
+            // WebM(VP9/Opus)으로 캡처된 경우 mp4로 담으면 -c copy가 실패합니다.
+            VideoKind.MediaCapture => candidate.ContentType.Contains("webm", StringComparison.OrdinalIgnoreCase)
+                ? ".webm"
+                : ".mp4",
+            _ => GetDirectDownloadExtension(candidate.Url)
+        };
         var fileName = $"{baseName}_{DateTime.Now:yyyyMMdd_HHmmss}{extension}";
         var outputPath = Path.Combine(_downloadFolder, fileName);
 
@@ -515,10 +740,27 @@ public partial class MainWindow
             cancellationToken.ThrowIfCancellationRequested();
             SetStatus($"HLS 키 요청 중... {index + 1}/{keyUrls.Count}");
 
-            var keyBytes = await FetchBytesAsync(keyUrls[index], referer, cancellationToken);
-            if (keyBytes.Length != 16)
+            // 키 서버가 막혀 있어도 여기서 죽이지 않습니다. 호출부가 ffmpeg 경로로 넘어갑니다.
+            byte[] responseBytes;
+            try
             {
-                throw new InvalidOperationException($"HLS AES-128 키 길이가 16바이트가 아닙니다. URL: {keyUrls[index]}");
+                responseBytes = await FetchKeyBytesAsync(keyUrls[index], referer, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log($"HLS 키 요청 실패: {keyUrls[index]} ({ex.Message})");
+                continue;
+            }
+
+            var keyBytes = HlsManifestService.ParseKeyMaterial(responseBytes);
+            if (keyBytes is null)
+            {
+                Log($"HLS AES-128 키를 해석하지 못했습니다({responseBytes.Length}바이트). URL: {keyUrls[index]}");
+                continue;
             }
 
             keyByUrl[keyUrls[index]] = new[] { keyBytes };

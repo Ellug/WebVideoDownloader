@@ -151,8 +151,10 @@ internal static class TransportStreamService
             return false;
         }
 
+        // 3개는 무작위 바이트에서도 우연히 맞을 수 있어 오탐이 납니다.
+        // 실제 TS 세그먼트는 수천 패킷이므로 8개 연속을 요구해도 손해가 없습니다.
         var packetCount = candidate.Bytes.Length / 188;
-        var requiredSyncCount = Math.Min(3, packetCount);
+        var requiredSyncCount = Math.Min(8, packetCount);
         return candidate.SyncCount >= requiredSyncCount;
     }
 
@@ -160,14 +162,15 @@ internal static class TransportStreamService
     {
         const int packetSize = 188;
         const int maxProbePackets = 32;
-        const int maxSearchPackets = 32;
+        // 가짜 이미지 헤더 등 잡바이트를 앞에 붙여 내려주는 사이트가 있어 넉넉히 훑습니다.
+        const int maxSearchBytes = 64 * 1024;
 
         if (bytes.Length < packetSize)
         {
             return (-1, 0);
         }
 
-        var maxSearchOffset = Math.Min(bytes.Length - packetSize, packetSize * maxSearchPackets);
+        var maxSearchOffset = Math.Min(bytes.Length - packetSize, maxSearchBytes);
         var bestOffset = -1;
         var bestSyncCount = 0;
 

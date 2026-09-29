@@ -227,9 +227,14 @@ public partial class MainWindow
     {
         _scanTimerTicks++;
         ExpirePlaybackSignals();
+        AddOrUpdateCaptureCandidate();
         if (_scanTimerTicks > 120)
         {
-            _scanTimer.Stop();
+            // 캡처 중이면 크기 표시를 계속 갱신해야 하므로 타이머를 유지합니다.
+            if (_candidates.All(candidate => candidate.Kind != VideoKind.MediaCapture))
+            {
+                _scanTimer.Stop();
+            }
         }
         else
         {
@@ -266,6 +271,7 @@ public partial class MainWindow
         _blobUrls.Clear();
         _networkRequests.Clear();
         _responseBodyProbeCount = 0;
+        _captureSink.ResetSession();
         candidatesListView.Items.Clear();
         downloadButton.Enabled = false;
     }
@@ -312,6 +318,13 @@ public partial class MainWindow
                 }
             }
             string html = DeserializeJsonString(await webView.CoreWebView2.ExecuteScriptAsync("document.documentElement ? document.documentElement.outerHTML : ''"));
+            // Some HLS players store an extensionless/.shtml playlist in data-video-url.
+            foreach (string configuredUrl in DeserializeStringArray(await webView.CoreWebView2.ExecuteScriptAsync(
+                "Array.from(document.querySelectorAll('[data-video-url]')).map(e => { try { return new URL(e.getAttribute('data-video-url'), document.baseURI).href; } catch { return ''; } })")))
+            {
+                var kind = MediaClassifier.DetermineConfiguredVideoKind(configuredUrl);
+                AddCandidate(configuredUrl, "플레이어 설정", "", kind);
+            }
             foreach (string candidateUrl2 in _mediaUrlExtractor.ExtractMediaUrls(html))
             {
                 AddCandidate(candidateUrl2, "HTML", "");

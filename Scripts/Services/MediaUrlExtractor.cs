@@ -25,8 +25,14 @@ internal sealed class MediaUrlExtractor(Func<string, string?> resolveUrl)
         {
             foreach (Match match in MediaUrlRegex.Matches(source))
             {
-                var resolvedUrl = resolveUrl(match.Groups["url"].Value);
-                if (!string.IsNullOrWhiteSpace(resolvedUrl) && seen.Add(resolvedUrl))
+                var rawUrl = match.Groups["url"].Value;
+                if (UrlTools.LooksLikeUrlPattern(rawUrl))
+                {
+                    continue;
+                }
+
+                var resolvedUrl = resolveUrl(rawUrl);
+                if (UrlTools.IsPlausibleMediaUrl(resolvedUrl) && seen.Add(resolvedUrl))
                 {
                     yield return resolvedUrl;
                 }
@@ -46,8 +52,14 @@ internal sealed class MediaUrlExtractor(Func<string, string?> resolveUrl)
         {
             foreach (Match match in PlayerUrlRegex.Matches(source))
             {
-                var resolvedUrl = resolveUrl(match.Groups["url"].Value);
-                if (!string.IsNullOrWhiteSpace(resolvedUrl) && seen.Add(resolvedUrl))
+                var rawUrl = match.Groups["url"].Value;
+                if (UrlTools.LooksLikeUrlPattern(rawUrl))
+                {
+                    continue;
+                }
+
+                var resolvedUrl = resolveUrl(rawUrl);
+                if (UrlTools.IsPlausibleMediaUrl(resolvedUrl) && seen.Add(resolvedUrl))
                 {
                     yield return resolvedUrl;
                 }
