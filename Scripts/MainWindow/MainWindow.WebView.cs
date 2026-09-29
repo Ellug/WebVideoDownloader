@@ -265,6 +265,7 @@ public partial class MainWindow
 
     private void ClearCandidates()
     {
+        _browserDownloadOrigins.Clear();
         _candidateUrls.Clear();
         _candidates.Clear();
         _playerUrls.Clear();

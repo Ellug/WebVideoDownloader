@@ -5,7 +5,7 @@ using WebVideoDownloader.Models;
 
 namespace WebVideoDownloader.Services;
 
-internal sealed class FfmpegRunner(string browserUserAgent, Action<string> setStatus, Action<string> log)
+internal sealed partial class FfmpegRunner(string browserUserAgent, Action<string> setStatus, Action<string> log)
 {
     private static readonly string? BundledFfmpegPath = ResolveBundledFfmpegPath();
 
@@ -46,8 +46,13 @@ internal sealed class FfmpegRunner(string browserUserAgent, Action<string> setSt
         CancellationToken cancellationToken)
     {
         using var process = CreateBaseProcess();
-        process.StartInfo.ArgumentList.Add("-user_agent");
-        process.StartInfo.ArgumentList.Add(browserUserAgent);
+        var remoteInput = Uri.TryCreate(inputUrlOrPath, UriKind.Absolute, out var inputUri) &&
+            inputUri.Scheme is "http" or "https";
+        if (remoteInput)
+        {
+            process.StartInfo.ArgumentList.Add("-user_agent");
+            process.StartInfo.ArgumentList.Add(browserUserAgent);
+        }
         process.StartInfo.ArgumentList.Add("-allowed_extensions");
         process.StartInfo.ArgumentList.Add("ALL");
         process.StartInfo.ArgumentList.Add("-allowed_segment_extensions");
@@ -57,7 +62,7 @@ internal sealed class FfmpegRunner(string browserUserAgent, Action<string> setSt
         process.StartInfo.ArgumentList.Add("-protocol_whitelist");
         process.StartInfo.ArgumentList.Add("file,http,https,tcp,tls,crypto,data");
 
-        if (headerLines.Length > 0)
+        if (remoteInput && headerLines.Length > 0)
         {
             process.StartInfo.ArgumentList.Add("-headers");
             process.StartInfo.ArgumentList.Add(headerLines);

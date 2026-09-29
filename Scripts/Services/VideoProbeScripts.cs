@@ -314,7 +314,14 @@ internal static class VideoProbeScripts
 
             const endpoint = 'http://127.0.0.1:__WVD_PORT__/chunk?token=__WVD_TOKEN__';
             const info = new WeakMap();
-            let nextTrackId = 0;
+            const tracks = [];
+            let nextTrackId = crypto.getRandomValues(new Uint32Array(1))[0] & 0x3fffffff;
+            let captureError = null;
+            window.__wvdFlushCapture = async () => {
+                await Promise.all(tracks.map(track => track.queue));
+                if (captureError) throw new Error(captureError);
+                return true;
+            };
 
             const send = (track, mime, seq, bytes) => {
                 const url = endpoint + '&track=' + track + '&seq=' + seq + '&mime=' + encodeURIComponent(mime);
@@ -327,7 +334,9 @@ internal static class VideoProbeScripts
                     credentials: 'omit',
                     cache: 'no-store',
                     referrerPolicy: 'no-referrer'
-                }).catch(() => {});
+                }).then(response => {
+                    if (!response.ok) throw new Error('캡처 전송 HTTP ' + response.status);
+                }).catch(error => { captureError = String(error); });
             };
 
             const toBytes = (data) => {
@@ -347,13 +356,15 @@ internal static class VideoProbeScripts
                 const sourceBuffer = originalAddSourceBuffer.call(this, mimeType);
 
                 try {
-                    info.set(sourceBuffer, {
+                    const track = {
                         id: nextTrackId++,
                         mime: String(mimeType || ''),
                         seq: 0,
                         // 전송을 직렬화해야 싱크에 도착하는 순서가 append 순서와 같아집니다.
                         queue: Promise.resolve()
-                    });
+                    };
+                    info.set(sourceBuffer, track);
+                    tracks.push(track);
                 } catch {}
 
                 return sourceBuffer;
@@ -361,6 +372,7 @@ internal static class VideoProbeScripts
 
             const originalAppendBuffer = SourceBuffer.prototype.appendBuffer;
             SourceBuffer.prototype.appendBuffer = function (data) {
+                const result = originalAppendBuffer.call(this, data);
                 try {
                     const entry = info.get(this);
                     if (entry) {
@@ -372,7 +384,7 @@ internal static class VideoProbeScripts
                     }
                 } catch {}
 
-                return originalAppendBuffer.call(this, data);
+                return result;
             };
         })();
         """;

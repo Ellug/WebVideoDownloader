@@ -19,7 +19,6 @@ internal sealed class MediaCaptureSink(Action<string> log) : IDisposable
 {
     private const long MaxChunkBytes = 32L * 1024 * 1024;
     private const long MaxSessionBytes = 8L * 1024 * 1024 * 1024;
-    private const long MinUsableTrackBytes = 64 * 1024;
 
     private readonly ConcurrentDictionary<int, TrackWriter> _tracks = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -120,31 +119,35 @@ internal sealed class MediaCaptureSink(Action<string> log) : IDisposable
     }
 
     /// <summary>
-    /// 열린 파일을 모두 flush하고, 트랙별로 가장 큰 조각 하나씩 돌려줍니다.
-    /// 화질 전환으로 init 세그먼트가 다시 들어오면 조각이 나뉘므로 가장 긴 것을 씁니다.
+    /// 저장 중 재생이 계속되어도 결과가 변하지 않도록 모든 조각을 별도 파일로 복사합니다.
     /// </summary>
-    public async Task<IReadOnlyList<CapturedTrack>> FlushAsync()
+    public async Task<IReadOnlyList<CapturedTrack>> SnapshotAsync(string directory, CancellationToken cancellationToken)
     {
-        await _writeLock.WaitAsync();
+        await _writeLock.WaitAsync(cancellationToken);
         try
         {
             foreach (var track in _tracks.Values)
             {
                 await track.FlushAsync();
             }
+            Directory.CreateDirectory(directory);
+            var result = new List<CapturedTrack>();
+            foreach (var part in _tracks.Values.SelectMany(track => track.SnapshotParts())
+                .Where(part => part.ByteCount > 0).OrderBy(part => part.TrackId).ThenBy(part => part.PartIndex))
+            {
+                var path = Path.Combine(directory, $"part-{part.TrackId}-{part.PartIndex}.bin");
+                await using var input = new FileStream(part.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                await input.CopyToAsync(output, cancellationToken);
+                result.Add(part with { FilePath = path });
+            }
+            return result;
         }
         finally
         {
             _writeLock.Release();
         }
 
-        return _tracks.Values
-            .SelectMany(track => track.SnapshotParts())
-            .Where(part => part.ByteCount >= MinUsableTrackBytes)
-            .GroupBy(part => part.TrackId)
-            .Select(group => group.MaxBy(part => part.ByteCount)!)
-            .OrderBy(part => part.TrackId)
-            .ToList();
     }
 
     private async Task AcceptLoopAsync(TcpListener listener, CancellationToken cancellationToken)
@@ -228,7 +231,7 @@ internal sealed class MediaCaptureSink(Action<string> log) : IDisposable
         {
             if (_sessionBytes + body.Length > MaxSessionBytes)
             {
-                return;
+                throw new InvalidOperationException("캡처 저장 한도(8GB)를 초과했습니다.");
             }
 
             string sessionRoot;
@@ -449,6 +452,7 @@ internal sealed class MediaCaptureSink(Action<string> log) : IDisposable
         private string _currentPath = "";
         private long _currentBytes;
         private int _partIndex = -1;
+        private bool _currentHasMedia;
 
         public int TrackId => trackId;
 
@@ -463,6 +467,8 @@ internal sealed class MediaCaptureSink(Action<string> log) : IDisposable
 
             await _currentStream!.WriteAsync(chunk);
             _currentBytes += chunk.Length;
+            _currentHasMedia |= !IsInitializationSegment(chunk) ||
+                chunk.AsSpan().IndexOf("mdat"u8) >= 0 || chunk.AsSpan().IndexOf(new byte[] { 0x1F, 0x43, 0xB6, 0x75 }) >= 0;
         }
 
         public async Task FlushAsync()
@@ -476,7 +482,7 @@ internal sealed class MediaCaptureSink(Action<string> log) : IDisposable
         public IReadOnlyList<CapturedTrack> SnapshotParts()
         {
             var parts = new List<CapturedTrack>(_completedParts);
-            if (_currentStream is not null && _currentBytes > 0)
+            if (_currentStream is not null && _currentBytes > 0 && _currentHasMedia)
             {
                 parts.Add(new CapturedTrack(trackId, _partIndex, mimeType, _currentPath, _currentBytes));
             }
@@ -490,11 +496,13 @@ internal sealed class MediaCaptureSink(Action<string> log) : IDisposable
             {
                 await _currentStream.FlushAsync();
                 await _currentStream.DisposeAsync();
-                _completedParts.Add(new CapturedTrack(trackId, _partIndex, mimeType, _currentPath, _currentBytes));
+                if (_currentHasMedia)
+                    _completedParts.Add(new CapturedTrack(trackId, _partIndex, mimeType, _currentPath, _currentBytes));
             }
 
             _partIndex++;
             _currentBytes = 0;
+            _currentHasMedia = false;
             _currentPath = Path.Combine(sessionRoot, $"track{trackId}_{_partIndex}.bin");
             // 캡처를 계속하면서 ffmpeg가 같은 파일을 읽어야 하므로 공유를 최대한 열어 둡니다.
             _currentStream = new FileStream(

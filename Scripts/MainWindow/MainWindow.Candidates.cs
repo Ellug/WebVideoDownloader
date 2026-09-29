@@ -66,7 +66,7 @@ public partial class MainWindow
             return;
         }
 
-        var note = $"{status.TrackCount}트랙 {FormatBytes(status.ByteCount)}";
+        var note = $"수신분만 · {status.TrackCount}트랙 {FormatBytes(status.ByteCount)}";
         var existingIndex = _candidates.FindIndex(candidate => candidate.Kind == VideoKind.MediaCapture);
 
         if (existingIndex >= 0)

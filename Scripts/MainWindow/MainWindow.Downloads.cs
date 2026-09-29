@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -49,27 +49,40 @@ public partial class MainWindow
     /// </summary>
     private async Task SaveCapturedMediaAsync(string outputPath, CancellationToken cancellationToken)
     {
-        SetStatus("캡처본 정리 중...");
-        var tracks = await _captureSink.FlushAsync();
-
-        if (tracks.Count == 0)
+        var snapshotDirectory = Path.Combine(Path.GetTempPath(), "WebVideoDownloader", Guid.NewGuid().ToString("N"));
+        try
         {
-            throw new InvalidOperationException(
-                "캡처된 재생 데이터가 없습니다. 페이지에서 영상을 재생한 뒤 다시 시도하세요. " +
-                "DRM(EME/Widevine)으로 보호된 영상은 브라우저 안에서도 평문이 나오지 않아 캡처할 수 없습니다.");
-        }
+            SetStatus("캡처본 정리 중...");
+            if (webView.CoreWebView2 is { } core)
+            {
+                var flush = await core.CallDevToolsProtocolMethodAsync("Runtime.evaluate", JsonSerializer.Serialize(new
+                {
+                    expression = "window.__wvdFlushCapture?.()", awaitPromise = true, returnByValue = true
+                })).WaitAsync(cancellationToken);
+                using var flushResult = JsonDocument.Parse(flush);
+                if (flushResult.RootElement.TryGetProperty("exceptionDetails", out _))
+                    throw new InvalidOperationException("캡처 데이터 전송이 누락되었습니다. 페이지를 다시 열고 캡처하세요.");
+            }
+            var tracks = await _captureSink.SnapshotAsync(snapshotDirectory, cancellationToken);
 
-        foreach (var track in tracks)
-        {
-            Log($"캡처 트랙 #{track.TrackId}: {FormatBytes(track.ByteCount)} ({track.MimeType})");
-        }
+            if (tracks.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "캡처된 재생 데이터가 없습니다. 페이지에서 영상을 재생한 뒤 다시 시도하세요. " +
+                    "DRM(EME/Widevine)으로 보호된 영상은 브라우저 안에서도 평문이 나오지 않아 캡처할 수 없습니다.");
+            }
 
-        SetProgress(0, indeterminate: true);
-        SetStatus($"캡처본 {tracks.Count}개 트랙 병합 중...");
-        await _ffmpegRunner.MuxCapturedTracksAsync(
-            tracks.Select(track => track.FilePath).ToList(),
-            outputPath,
-            cancellationToken);
+            foreach (var track in tracks)
+            {
+                Log($"캡처 트랙 #{track.TrackId}, 조각 #{track.PartIndex}: {FormatBytes(track.ByteCount)} ({track.MimeType})");
+            }
+
+            SetProgress(0, indeterminate: true);
+            SetStatus($"캡처본 {tracks.Count}개 트랙 병합 중...");
+            Log("현재까지 수신한 캡처 조각을 모두 저장합니다. 아직 재생/수신하지 않은 구간은 포함되지 않습니다.");
+            await _ffmpegRunner.SaveCapturePartsAsync(tracks, snapshotDirectory, outputPath, cancellationToken);
+        }
+        finally { TryDeleteDirectory(snapshotDirectory); }
     }
 
     private async Task DownloadHlsAsync(VideoCandidate candidate, string outputPath, CancellationToken cancellationToken)
@@ -79,8 +92,10 @@ public partial class MainWindow
 
         if (string.IsNullOrWhiteSpace(candidate.CapturedManifestText))
         {
-            await _ffmpegRunner.DownloadHlsAsync(candidate.Url, outputPath, headerLines, stderrTail, cancellationToken);
-            return;
+            var manifest = await FetchStringAsync(candidate.Url, candidate.Referer, cancellationToken);
+            if (!HlsManifestService.LooksLikeManifest(manifest))
+                throw new InvalidOperationException("영상 목록 대신 HTML/차단 응답을 받았습니다. 앱 안에서 영상이 재생되는지 확인하세요.");
+            candidate = candidate with { CapturedManifestText = manifest };
         }
 
         var tempRoot = Path.Combine(Path.GetTempPath(), "WebVideoDownloader", Guid.NewGuid().ToString("N"));
@@ -245,7 +260,10 @@ public partial class MainWindow
 
         try
         {
-            await _ffmpegRunner.DownloadHlsAsync(localManifestPath, outputPath, headerLines, stderrTail, cancellationToken);
+            SetStatus("브라우저 세션으로 HLS 리소스를 모으는 중...");
+            localManifestPath = await HlsLocalizer.SaveAsync(manifestText, manifestUrl, tempRoot,
+                (url, token) => FetchKeyBytesAsync(url, _currentPageUrl, token), cancellationToken);
+            await _ffmpegRunner.DownloadHlsAsync(localManifestPath, outputPath, "", stderrTail, cancellationToken);
             return;
         }
         catch (OperationCanceledException)
@@ -385,7 +403,7 @@ public partial class MainWindow
 
     private async Task AddCommonRequestHeadersAsync(HttpRequestMessage request, VideoCandidate candidate)
     {
-        request.Headers.UserAgent.ParseAdd(BrowserUserAgent);
+        request.Headers.UserAgent.ParseAdd(webView.CoreWebView2?.Settings.UserAgent ?? BrowserUserAgent);
         request.Headers.Accept.ParseAdd("*/*");
 
         if (Uri.TryCreate(candidate.Referer, UriKind.Absolute, out var referer))
@@ -403,12 +421,7 @@ public partial class MainWindow
 
     private async Task<string> FetchStringAsync(string url, string referer, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        await AddRequestHeadersAsync(request, referer, url);
-
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        var bytes = await NetworkResponseReader.ReadBytesAsync(response, cancellationToken);
+        var bytes = await FetchBytesAsync(url, referer, cancellationToken);
         return Encoding.UTF8.GetString(bytes);
     }
 
@@ -438,17 +451,27 @@ public partial class MainWindow
 
     private async Task<byte[]> FetchBytesAsync(string url, string referer, CancellationToken cancellationToken)
     {
+        var origin = new Uri(url).GetLeftPart(UriPartial.Authority);
+        if (_browserDownloadOrigins.Contains(origin))
+            return await FetchBrowserBytesAsync(url, cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         await AddRequestHeadersAsync(request, referer, url);
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (response.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Unauthorized)
+        {
+            Log($"외부 요청 HTTP {(int)response.StatusCode}: 브라우저 재생 세션으로 다시 요청합니다. ({new Uri(url).Host})");
+            var bytes = await FetchBrowserBytesAsync(url, cancellationToken);
+            _browserDownloadOrigins.Add(origin);
+            return bytes;
+        }
         response.EnsureSuccessStatusCode();
         return await NetworkResponseReader.ReadBytesAsync(response, cancellationToken);
     }
 
     private async Task AddRequestHeadersAsync(HttpRequestMessage request, string refererUrl, string targetUrl)
     {
-        request.Headers.UserAgent.ParseAdd(BrowserUserAgent);
+        request.Headers.UserAgent.ParseAdd(webView.CoreWebView2?.Settings.UserAgent ?? BrowserUserAgent);
         request.Headers.Accept.ParseAdd("*/*");
 
         if (Uri.TryCreate(refererUrl, UriKind.Absolute, out var referer))
@@ -578,25 +601,35 @@ public partial class MainWindow
             1024 * 1024,
             useAsync: true);
 
-        while (nextToWrite < segments.Count)
+        using var batch = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            while (nextToStart < segments.Count && inFlight.Count < concurrency)
+            while (nextToWrite < segments.Count)
             {
-                var segmentIndex = nextToStart;
-                inFlight[segmentIndex] = DownloadAndDecryptSegmentAsync(segments[segmentIndex], referer, cancellationToken);
-                nextToStart++;
+                batch.Token.ThrowIfCancellationRequested();
+
+                while (nextToStart < segments.Count && inFlight.Count < concurrency)
+                {
+                    var segmentIndex = nextToStart;
+                    inFlight[segmentIndex] = DownloadAndDecryptSegmentAsync(segments[segmentIndex], referer, batch.Token);
+                    nextToStart++;
+                }
+
+                var segmentBytes = await inFlight[nextToWrite];
+                inFlight.Remove(nextToWrite);
+                await output.WriteAsync(segmentBytes, batch.Token);
+
+                nextToWrite++;
+                var percent = (int)Math.Clamp(nextToWrite * 100D / segments.Count, 0, 100);
+                SetProgress(percent, indeterminate: false);
+                SetStatus($"세그먼트 다운로드/복호화 중... {nextToWrite}/{segments.Count}");
             }
-
-            var segmentBytes = await inFlight[nextToWrite];
-            inFlight.Remove(nextToWrite);
-            await output.WriteAsync(segmentBytes, cancellationToken);
-
-            nextToWrite++;
-            var percent = (int)Math.Clamp(nextToWrite * 100D / segments.Count, 0, 100);
-            SetProgress(percent, indeterminate: false);
-            SetStatus($"세그먼트 다운로드/복호화 중... {nextToWrite}/{segments.Count}");
+        }
+        finally
+        {
+            await batch.CancelAsync();
+            try { await Task.WhenAll(inFlight.Values); }
+            catch { /* Preserve the original segment error after draining requests. */ }
         }
     }
 

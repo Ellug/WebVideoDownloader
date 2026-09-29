@@ -3,6 +3,12 @@
 [Oo]bj/
 artifacts/
 
+# Local tests, test results and coverage reports
+/Tests/
+TestResults/
+coverage/
+*.trx
+
 # User-specific files
 *.user
 *.rsuser
